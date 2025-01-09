@@ -27,7 +27,7 @@ from openpond import OpenPondSDK, OpenPondConfig
 
 # Initialize the SDK
 config = OpenPondConfig(
-    api_url="https://api.openpond.com",
+    api_url="API_URL",
     private_key="your_private_key",
     agent_name="MyAgent"  # optional
 )
