@@ -1,9 +1,12 @@
+import json
 import time
 from threading import Event, Thread
 from typing import Callable, List, Optional
+from urllib.parse import urljoin
 
 import requests
 from requests.exceptions import RequestException
+from sseclient import SSEClient
 
 from .types import Agent, Message, OpenPondConfig
 
@@ -28,14 +31,15 @@ class OpenPondSDK:
         """
         self.config = config
         self.headers = {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream"
         }
         if config.api_key:
             self.headers["X-API-Key"] = config.api_key
             
-        self._poll_thread: Optional[Thread] = None
+        self._sse_client: Optional[SSEClient] = None
+        self._sse_thread: Optional[Thread] = None
         self._stop_event = Event()
-        self._last_message_timestamp = 0
         self._message_callback: Optional[Callable[[Message], None]] = None
         self._error_callback: Optional[Callable[[Exception], None]] = None
 
@@ -48,10 +52,10 @@ class OpenPondSDK:
         self._error_callback = callback
 
     def start(self) -> None:
-        """Start the SDK and begin listening for messages"""
+        """Start the SDK and begin listening for messages using SSE"""
         try:
             self._register_agent()
-            self._start_polling()
+            self._start_sse()
         except Exception as e:
             if self._error_callback:
                 self._error_callback(e)
@@ -59,10 +63,13 @@ class OpenPondSDK:
 
     def stop(self) -> None:
         """Stop the SDK and clean up resources"""
-        if self._poll_thread:
-            self._stop_event.set()
-            self._poll_thread.join()
-            self._poll_thread = None
+        self._stop_event.set()
+        if self._sse_thread:
+            self._sse_thread.join()
+            self._sse_thread = None
+        if self._sse_client:
+            self._sse_client.close()
+            self._sse_client = None
 
     def send_message(self, to_agent_id: str, content: str, 
                     conversation_id: Optional[str] = None,
@@ -193,24 +200,46 @@ class OpenPondSDK:
                 self._error_callback(e)
             raise
 
-    def _start_polling(self) -> None:
-        """Start polling for new messages"""
-        def poll_messages():
-            while not self._stop_event.is_set():
-                try:
-                    messages = self.get_messages()
-                    for message in messages:
-                        self._last_message_timestamp = max(
-                            self._last_message_timestamp,
-                            message.timestamp
-                        )
-                        if self._message_callback:
-                            self._message_callback(message)
-                except Exception as e:
-                    if self._error_callback:
-                        self._error_callback(e)
-                
-                self._stop_event.wait(5)  # Poll every 5 seconds
+    def _start_sse(self) -> None:
+        """Start SSE connection for real-time messages"""
+        def listen_for_messages():
+            # Setup SSE headers
+            sse_headers = self.headers.copy()
+            if self.config.private_key:
+                timestamp = str(int(time.time() * 1000))
+                message = f"Authenticate to OpenPond API at timestamp {timestamp}"
+                sse_headers.update({
+                    "X-Agent-Id": self.config.private_key,
+                    "X-Timestamp": timestamp,
+                    # TODO: Add signature once we implement signing
+                    # "X-Signature": signature
+                })
 
-        self._poll_thread = Thread(target=poll_messages, daemon=True)
-        self._poll_thread.start() 
+            url = urljoin(self.config.api_url, "/messages/stream")
+            self._sse_client = SSEClient(url, headers=sse_headers)
+
+            try:
+                for event in self._sse_client:
+                    if self._stop_event.is_set():
+                        break
+
+                    try:
+                        message = Message(**json.loads(event.data))
+                        # Only process messages intended for us
+                        if (self.config.private_key and 
+                            message.to_agent_id == self.config.private_key):
+                            if self._message_callback:
+                                self._message_callback(message)
+                    except Exception as e:
+                        if self._error_callback:
+                            self._error_callback(e)
+            except Exception as e:
+                if self._error_callback:
+                    self._error_callback(e)
+                # Wait before reconnecting
+                if not self._stop_event.is_set():
+                    time.sleep(1)
+                    self._start_sse()
+
+        self._sse_thread = Thread(target=listen_for_messages, daemon=True)
+        self._sse_thread.start() 

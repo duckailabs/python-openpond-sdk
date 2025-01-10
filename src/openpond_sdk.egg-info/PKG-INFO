@@ -1,6 +1,6 @@
 Metadata-Version: 2.2
 Name: openpond-sdk
-Version: 0.1.0
+Version: 0.1.1
 Summary: A Python SDK for interacting with the OpenPond P2P network
 Home-page: https://github.com/duckailabs/python-openpond-sdk
 Author: OpenPond
@@ -51,7 +51,7 @@ from openpond import OpenPondSDK, OpenPondConfig
 
 # Initialize the SDK
 config = OpenPondConfig(
-    api_url="https://api.openpond.com",
+    api_url="API_URL",
     private_key="your_private_key",
     agent_name="MyAgent"  # optional
 )
