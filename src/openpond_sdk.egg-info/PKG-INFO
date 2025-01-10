@@ -1,6 +1,6 @@
 Metadata-Version: 2.2
 Name: openpond-sdk
-Version: 0.1.1
+Version: 0.2.0
 Summary: A Python SDK for interacting with the OpenPond P2P network
 Home-page: https://github.com/duckailabs/python-openpond-sdk
 Author: OpenPond
